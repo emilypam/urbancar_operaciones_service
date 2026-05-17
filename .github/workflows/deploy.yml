@@ -1,0 +1,44 @@
+name: Deploy operaciones-service
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  ACR_SERVER: urbancarregistry.azurecr.io
+  RESOURCE_GROUP: urbancar-rg
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login a Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login a ACR
+        uses: docker/login-action@v3
+        with:
+          registry: urbancarregistry.azurecr.io
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build y push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: urbancarregistry.azurecr.io/operaciones-service:latest
+
+      - name: Deploy a Container Apps
+        run: |
+          az containerapp update \
+            --name operaciones-service \
+            --resource-group $RESOURCE_GROUP \
+            --image $ACR_SERVER/operaciones-service:latest \
+            --output none
+          echo "operaciones-service desplegado ✓"

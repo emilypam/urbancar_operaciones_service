@@ -1,0 +1,151 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Seguro {
+  id          String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  nombre      String?   @unique
+  descripcion String?
+  precioDia   Decimal?  @map("precio_dia") @db.Decimal(10, 2)
+  cobertura   String?
+  isActive    Boolean?  @default(true) @map("is_active")
+  createdAt   DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  reservas    Reserva[]
+
+  @@map("seguros")
+}
+
+model CanalVenta {
+  id       String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  nombre   String?   @unique
+  codigo   String?   @unique
+  reservas Reserva[]
+
+  @@map("canales_venta")
+}
+
+model Tarifa {
+  id          String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  categoriaId String?   @map("categoria_id") @db.Uuid
+  nombre      String?
+  precioDia   Decimal?  @map("precio_dia") @db.Decimal(10, 2)
+  diasMinimos Int?      @default(1) @map("dias_minimos")
+  isActive    Boolean?  @default(true) @map("is_active")
+  createdAt   DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+
+  @@map("tarifas")
+}
+
+model Reserva {
+  id            String          @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  correlationId String?         @unique @default(dbgenerated("uuid_generate_v4()")) @map("correlation_id") @db.Uuid
+  usuarioId     String?         @map("usuario_id") @db.Uuid
+  vehiculoId    String?         @map("vehiculo_id") @db.Uuid
+  agenciaId     String?         @map("agencia_id") @db.Uuid
+  seguroId      String?         @map("seguro_id") @db.Uuid
+  canalVentaId  String?         @map("canal_venta_id") @db.Uuid
+  codigoReserva String?         @unique @map("codigo_reserva")
+  fechaInicio   DateTime?       @map("fecha_inicio") @db.Date
+  fechaFin      DateTime?       @map("fecha_fin") @db.Date
+  diasTotal     Int?            @map("dias_total")
+  precioBase    Decimal?        @map("precio_base") @db.Decimal(10, 2)
+  precioExtras  Decimal?        @default(0) @map("precio_extras") @db.Decimal(10, 2)
+  precioSeguro  Decimal?        @default(0) @map("precio_seguro") @db.Decimal(10, 2)
+  totalAmount   Decimal?        @map("total_amount") @db.Decimal(10, 2)
+  status        reserva_status? @default(PENDIENTE)
+  notas         String?
+  expiresAt     DateTime?       @map("expires_at") @db.Timestamp(6)
+  createdAt     DateTime?       @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt     DateTime?       @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+  alquiler      Alquiler?
+  extras        ReservaExtra[]
+  seguro        Seguro?         @relation(fields: [seguroId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  canalVenta    CanalVenta?     @relation(fields: [canalVentaId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("reservas")
+}
+
+model ReservaExtra {
+  id        String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  reservaId String?   @map("reserva_id") @db.Uuid
+  extraId   String?   @map("extra_id") @db.Uuid
+  cantidad  Int?      @default(1)
+  precioDia Decimal?  @map("precio_dia") @db.Decimal(10, 2)
+  subtotal  Decimal?  @db.Decimal(10, 2)
+  reserva   Reserva?  @relation(fields: [reservaId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([reservaId, extraId])
+  @@map("reserva_extras")
+}
+
+model Alquiler {
+  id             String           @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  reservaId      String?          @unique @map("reserva_id") @db.Uuid
+  kmSalida       Int?             @map("km_salida")
+  kmEntrada      Int?             @map("km_entrada")
+  fechaInicio    DateTime?        @map("fecha_inicio") @db.Timestamp(6)
+  fechaFin       DateTime?        @map("fecha_fin") @db.Timestamp(6)
+  cargoAdicional Decimal?         @default(0) @map("cargo_adicional") @db.Decimal(10, 2)
+  status         alquiler_status? @default(ACTIVO)
+  observaciones  String?
+  createdAt      DateTime?        @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt      DateTime?        @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+  reserva        Reserva?         @relation(fields: [reservaId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  devolucion     Devolucion?
+
+  @@map("alquileres")
+}
+
+model Devolucion {
+  id              String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  alquilerId      String?   @unique @map("alquiler_id") @db.Uuid
+  fechaDevolucion DateTime? @default(now()) @map("fecha_devolucion") @db.Timestamp(6)
+  kmEntrada       Int?      @map("km_entrada")
+  estadoVehiculo  String?   @map("estado_vehiculo")
+  cargoExtra      Decimal?  @default(0) @map("cargo_extra") @db.Decimal(10, 2)
+  observaciones   String?
+  createdAt       DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  alquiler        Alquiler? @relation(fields: [alquilerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@map("devoluciones")
+}
+
+model OutboxEvent {
+  id            String         @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  correlationId String?        @map("correlation_id") @db.Uuid
+  usuarioId     String?        @map("usuario_id") @db.Uuid
+  evento        String?
+  payload       Json?
+  status        outbox_status? @default(PENDIENTE)
+  intentos      Int?           @default(0)
+  procesadoAt   DateTime?      @map("procesado_at") @db.Timestamp(6)
+  createdAt     DateTime?      @default(now()) @map("created_at") @db.Timestamp(6)
+
+  @@map("outbox_events")
+}
+
+enum reserva_status {
+  PENDIENTE
+  CONFIRMADA
+  ACTIVA
+  COMPLETADA
+  CANCELADA
+}
+
+enum alquiler_status {
+  ACTIVO
+  FINALIZADO
+  CANCELADO
+}
+
+enum outbox_status {
+  PENDIENTE
+  PROCESADO
+  FALLIDO
+}
