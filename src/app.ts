@@ -33,11 +33,16 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 app.get('/api/v1/emilypamela/admin/dashboard', authenticate, requireAdmin, async (_req, res, next) => {
   try {
-    const [reservasTotal, reservasActivas, alquileresTotal] = await Promise.all([
+    const [reservasTotal, reservasActivas, alquileresTotal, ingresosAgg] = await Promise.all([
       prisma.reserva.count(),
       prisma.reserva.count({ where: { status: 'ACTIVA' } }),
       prisma.alquiler.count(),
+      prisma.reserva.aggregate({
+        where:  { status: { not: 'CANCELADA' } },
+        _sum:   { totalAmount: true },
+      }),
     ]);
+    const ingresosTotal = Number(ingresosAgg._sum.totalAmount ?? 0);
     res.json({
       success: true,
       data: {
@@ -46,7 +51,7 @@ app.get('/api/v1/emilypamela/admin/dashboard', authenticate, requireAdmin, async
         usuarios:   { total: 0 },
         alquileres: { total: alquileresTotal },
         facturas:   { total: 0 },
-        ingresos:   { total: 0 },
+        ingresos:   { total: ingresosTotal },
       },
     });
   } catch (err) { next(err); }

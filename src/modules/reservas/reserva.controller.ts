@@ -13,6 +13,16 @@ async function fetchInventario<T>(path: string): Promise<T | null> {
   } catch { return null; }
 }
 
+async function enrichWithVehiculos(reservas: any[]): Promise<any[]> {
+  const ids = [...new Set(reservas.map((r) => r.vehiculoId).filter(Boolean))] as string[];
+  if (!ids.length) return reservas;
+  const fetched = await Promise.all(
+    ids.map((id) => fetchInventario<any>(`/api/v1/emilypamela/vehiculos/${id}`)),
+  );
+  const vehiculoMap = new Map<string, any>(ids.map((id, i) => [id, fetched[i]]));
+  return reservas.map((r) => ({ ...r, vehiculo: vehiculoMap.get(r.vehiculoId) ?? null }));
+}
+
 function generarCodigo(): string {
   const ts  = Date.now().toString(36).toUpperCase();
   const rnd = Math.random().toString(36).substring(2, 5).toUpperCase();
@@ -31,7 +41,8 @@ export class ReservaController {
     try {
       const usuarioId = req.user!.id;
       const result = await this.reservaRepository.findAll(1, 500, { usuarioId });
-      res.json({ success: true, data: result.data });
+      const enriched = await enrichWithVehiculos(result.data);
+      res.json({ success: true, data: enriched });
     } catch (err) { next(err); }
   };
 
@@ -45,7 +56,9 @@ export class ReservaController {
         agenciaId:  req.query['agenciaId']  as string | undefined,
         status:     req.query['status']     as string | undefined,
       };
-      res.json({ success: true, data: await this.reservaRepository.findAll(page, limit, filters) });
+      const result = await this.reservaRepository.findAll(page, limit, filters);
+      const enrichedData = await enrichWithVehiculos(result.data);
+      res.json({ success: true, data: { ...result, data: enrichedData } });
     } catch (err) { next(err); }
   };
 
