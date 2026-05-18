@@ -5,13 +5,21 @@ import prisma from '../../shared/database/prisma.js';
 
 const INVENTARIO_URL = process.env['INVENTARIO_SERVICE_URL'] ?? 'http://localhost:3002';
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 async function fetchVehiculo(vehiculoId: string): Promise<any | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5_000);
   try {
-    const res = await fetch(`${INVENTARIO_URL}/api/v1/emilypamela/vehiculos/${vehiculoId}`);
+    const res = await fetch(
+      `${INVENTARIO_URL}/api/v1/emilypamela/vehiculos/${vehiculoId}`,
+      { signal: controller.signal },
+    );
     if (!res.ok) return null;
     const body = await res.json() as { success: boolean; data: any };
     return body.success ? body.data : null;
   } catch { return null; }
+  finally { clearTimeout(timer); }
 }
 
 function generarCodigo(): string {
@@ -20,9 +28,33 @@ function generarCodigo(): string {
   return `RES-${ts}-${rnd}`;
 }
 
-function calcularDias(inicio: string, fin: string): number {
-  const ms = new Date(fin).getTime() - new Date(inicio).getTime();
-  return Math.ceil(ms / (1000 * 60 * 60 * 24));
+interface FechaError { error: string }
+interface FechaOk   { dInicio: Date; dFin: Date; dias: number }
+type FechaValidation = FechaError | FechaOk;
+
+function validateFechas(rawInicio: unknown, rawFin: unknown): FechaValidation {
+  if (typeof rawInicio !== 'string' || !rawInicio.trim())
+    return { error: 'fechaInicio debe ser un string ISO 8601 válido' };
+  if (typeof rawFin !== 'string' || !rawFin.trim())
+    return { error: 'fechaFin debe ser un string ISO 8601 válido' };
+
+  const dInicio = new Date(rawInicio);
+  const dFin    = new Date(rawFin);
+
+  if (!Number.isFinite(dInicio.getTime()))
+    return { error: 'fechaInicio no es una fecha ISO 8601 válida' };
+  if (!Number.isFinite(dFin.getTime()))
+    return { error: 'fechaFin no es una fecha ISO 8601 válida' };
+
+  const hoy = new Date();
+  hoy.setUTCHours(0, 0, 0, 0);
+  if (dInicio < hoy)
+    return { error: 'fechaInicio no puede ser una fecha pasada' };
+  if (dFin <= dInicio)
+    return { error: 'fechaFin debe ser estrictamente posterior a fechaInicio' };
+
+  const dias = Math.ceil((dFin.getTime() - dInicio.getTime()) / 86_400_000);
+  return { dInicio, dFin, dias };
 }
 
 function toReservaBookingDto(reserva: any) {
@@ -40,7 +72,28 @@ function toReservaBookingDto(reserva: any) {
   };
 }
 
-// ── /reservas/booking ────────────────────────────────────────────────────────
+// ── State machine (Fix C-4) ───────────────────────────────────────────────────
+//
+// NOTE (Fix C-1): The definitive fix for the vehicle race condition requires a
+// unique partial index in PostgreSQL to be atomic at the DB level:
+//
+//   CREATE UNIQUE INDEX idx_one_active_per_vehicle ON reservas(vehiculo_id)
+//   WHERE status NOT IN ('CANCELADA', 'COMPLETADA');
+//
+// The application-level check below (paso 5) reduces the window but does not
+// eliminate it under high concurrency. Apply the index when possible.
+
+const ALLOWED_TRANSITIONS: Record<string, readonly string[]> = {
+  PENDIENTE:  ['CONFIRMADA', 'CANCELADA'],
+  CONFIRMADA: ['ACTIVA',     'CANCELADA'],
+  ACTIVA:     ['COMPLETADA', 'CANCELADA'],
+  COMPLETADA: [],
+  CANCELADA:  [],
+} as const;
+
+const VALID_STATUSES = Object.keys(ALLOWED_TRANSITIONS);
+
+// ── /reservas/booking ─────────────────────────────────────────────────────────
 export function createReservaBookingRouter(reservaRepo: ReservaRepository): Router {
   const router = Router();
 
@@ -61,11 +114,21 @@ export function createReservaBookingRouter(reservaRepo: ReservaRepository): Rout
     try {
       const { vehiculoId, clienteId, agenciaId: bodyAgenciaId, fechaInicio, fechaFin } = req.body;
 
+      // 1. Presence check
       if (!vehiculoId || !clienteId || !fechaInicio || !fechaFin) {
         res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'vehiculoId, clienteId, fechaInicio y fechaFin son requeridos' } });
         return;
       }
 
+      // 2. Date validation — Fix C-2
+      const fechaResult = validateFechas(fechaInicio, fechaFin);
+      if ('error' in fechaResult) {
+        res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: fechaResult.error } });
+        return;
+      }
+      const { dias } = fechaResult;
+
+      // 3. Vehicle fetch + availability
       const vehiculo = await fetchVehiculo(vehiculoId);
       if (!vehiculo) {
         res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: `Vehiculo ${vehiculoId} no encontrado` } });
@@ -76,26 +139,45 @@ export function createReservaBookingRouter(reservaRepo: ReservaRepository): Rout
         return;
       }
 
+      // 4. Price validation — Fix W-4
+      const precioDia = Number(vehiculo.precioDia);
+      if (!Number.isFinite(precioDia) || precioDia <= 0) {
+        res.status(422).json({ success: false, error: { code: 'VEHICLE_PRICE_MISSING', message: 'El vehículo no tiene precio por día configurado' } });
+        return;
+      }
+
+      // 5. Active-reservation conflict — application-level Fix C-1
+      const conflicto = await prisma.reserva.findFirst({
+        where: { vehiculoId, status: { notIn: ['CANCELADA', 'COMPLETADA'] } },
+      });
+      if (conflicto) {
+        res.status(409).json({ success: false, error: { code: 'CONFLICT', message: 'El vehículo ya tiene una reserva activa' } });
+        return;
+      }
+
       const agenciaId = bodyAgenciaId ?? vehiculo.agenciaId;
       if (!agenciaId) {
         res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'No se pudo determinar agenciaId del vehículo' } });
         return;
       }
 
-      const dias       = calcularDias(fechaInicio, fechaFin);
-      const precioBase = Number(vehiculo.precioDia) * dias;
+      const precioBase = precioDia * dias;
+
+      // Pass date-only strings so the repository's template literal stays valid
+      const fechaInicioDate = (fechaInicio as string).split('T')[0]!;
+      const fechaFinDate    = (fechaFin    as string).split('T')[0]!;
 
       const reserva = await reservaRepo.create({
-        usuarioId:    clienteId,
+        usuarioId:     clienteId,
         vehiculoId,
         agenciaId,
-        fechaInicio,
-        fechaFin,
-        diasTotal:    dias,
+        fechaInicio:   fechaInicioDate,
+        fechaFin:      fechaFinDate,
+        diasTotal:     dias,
         precioBase,
-        precioExtras: 0,
-        precioSeguro: 0,
-        totalAmount:  precioBase,
+        precioExtras:  0,
+        precioSeguro:  0,
+        totalAmount:   precioBase,
         codigoReserva: generarCodigo(),
       });
 
@@ -103,15 +185,43 @@ export function createReservaBookingRouter(reservaRepo: ReservaRepository): Rout
     } catch (err) { next(err); }
   });
 
-  // PATCH /api/v1/emilypamela/reservas/booking/:id
+  // PATCH /api/v1/emilypamela/reservas/booking/:id — Fix C-4
   router.patch('/:id', async (req: Request, res: Response, next: NextFunction) => {
     try {
+      const nuevoStatus: unknown = req.body.status;
+
+      if (typeof nuevoStatus !== 'string' || !VALID_STATUSES.includes(nuevoStatus)) {
+        res.status(400).json({
+          success: false,
+          error: {
+            code:    'INVALID_STATUS',
+            message: `status inválido. Valores permitidos: ${VALID_STATUSES.join(', ')}`,
+          },
+        });
+        return;
+      }
+
       const reserva = await reservaRepo.findById(req.params['id'] as string);
       if (!reserva) {
         res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: `Reserva ${req.params['id']} no encontrada` } });
         return;
       }
-      const updated = await reservaRepo.update(req.params['id'] as string, { status: req.body.status });
+
+      const currentStatus = reserva.status as string;
+      const allowed = ALLOWED_TRANSITIONS[currentStatus] ?? [];
+
+      if (!allowed.includes(nuevoStatus)) {
+        res.status(422).json({
+          success: false,
+          error: {
+            code:    'INVALID_TRANSITION',
+            message: `No se puede cambiar de ${currentStatus} a ${nuevoStatus}`,
+          },
+        });
+        return;
+      }
+
+      const updated = await reservaRepo.update(req.params['id'] as string, { status: nuevoStatus });
       res.json({ success: true, data: toReservaBookingDto(updated) });
     } catch (err) { next(err); }
   });
@@ -119,7 +229,7 @@ export function createReservaBookingRouter(reservaRepo: ReservaRepository): Rout
   return router;
 }
 
-// ── /alquileres/booking ──────────────────────────────────────────────────────
+// ── /alquileres/booking ───────────────────────────────────────────────────────
 export function createAlquilerBookingRouter(alquilerRepo: AlquilerRepository): Router {
   const router = Router();
 
@@ -163,7 +273,6 @@ export function createAlquilerBookingRouter(alquilerRepo: AlquilerRepository): R
         return a;
       });
 
-      // Notify inventario-service to update vehiculo status (best-effort, cross-service)
       if (reserva.vehiculoId) {
         fetch(`${INVENTARIO_URL}/api/v1/emilypamela/vehiculos/${reserva.vehiculoId}`, {
           method: 'PATCH',
@@ -180,7 +289,7 @@ export function createAlquilerBookingRouter(alquilerRepo: AlquilerRepository): R
   return router;
 }
 
-// ── /devoluciones/booking ────────────────────────────────────────────────────
+// ── /devoluciones/booking ─────────────────────────────────────────────────────
 export function createDevolucionBookingRouter(alquilerRepo: AlquilerRepository): Router {
   const router = Router();
 
@@ -210,7 +319,6 @@ export function createDevolucionBookingRouter(alquilerRepo: AlquilerRepository):
         return;
       }
 
-      // Fetch vehiculoId from reserva before transaction (Reserva is in this schema)
       const reservaObj = await prisma.reserva.findUnique({ where: { id: alquiler.reservaId! } });
 
       const devolucion = await prisma.$transaction(async (tx) => {
@@ -225,7 +333,6 @@ export function createDevolucionBookingRouter(alquilerRepo: AlquilerRepository):
         return d;
       });
 
-      // Notify inventario-service to release vehiculo (best-effort, cross-service)
       if (reservaObj?.vehiculoId) {
         fetch(`${INVENTARIO_URL}/api/v1/emilypamela/vehiculos/${reservaObj.vehiculoId}`, {
           method: 'PATCH',
