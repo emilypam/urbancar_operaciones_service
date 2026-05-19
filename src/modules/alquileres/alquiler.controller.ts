@@ -5,6 +5,32 @@ import prisma from '../../shared/database/prisma.js';
 
 const INVENTARIO_URL = process.env['INVENTARIO_SERVICE_URL'] ?? 'http://localhost:3002';
 
+async function fetchInventario<T>(path: string): Promise<T | null> {
+  try {
+    const res = await fetch(`${INVENTARIO_URL}${path}`);
+    if (!res.ok) return null;
+    const body = await res.json() as { success: boolean; data: T };
+    return body.success ? body.data : null;
+  } catch { return null; }
+}
+
+async function enrichAlquileresWithVehiculos(alquileres: any[]): Promise<any[]> {
+  const ids = [...new Set(
+    alquileres.map((a) => a.reserva?.vehiculoId).filter(Boolean)
+  )] as string[];
+  if (!ids.length) return alquileres;
+  const fetched = await Promise.all(
+    ids.map((id) => fetchInventario<any>(`/api/v1/emilypamela/vehiculos/${id}`)),
+  );
+  const vehiculoMap = new Map<string, any>(ids.map((id, i) => [id, fetched[i]]));
+  return alquileres.map((a) => ({
+    ...a,
+    reserva: a.reserva
+      ? { ...a.reserva, vehiculo: vehiculoMap.get(a.reserva.vehiculoId) ?? null }
+      : a.reserva,
+  }));
+}
+
 async function patchVehiculoStatus(vehiculoId: string, data: object, authHeader?: string) {
   fetch(`${INVENTARIO_URL}/api/v1/emilypamela/vehiculos/${vehiculoId}`, {
     method: 'PATCH',
@@ -21,7 +47,9 @@ export class AlquilerController {
       const page   = Number(req.query.page)  || 1;
       const limit  = Number(req.query.limit) || 20;
       const status = req.query['status'] as string | undefined;
-      res.json({ success: true, data: await this.alquilerRepository.findAll(page, limit, status) });
+      const result = await this.alquilerRepository.findAll(page, limit, status);
+      const enriched = await enrichAlquileresWithVehiculos(result.data);
+      res.json({ success: true, data: { ...result, data: enriched } });
     } catch (err) { next(err); }
   };
 
