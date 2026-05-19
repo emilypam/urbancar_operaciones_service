@@ -3,7 +3,8 @@ import { AlquilerRepository } from './alquiler.repository.js';
 import { NotFoundException, ValidationException } from '../../shared/errors/BusinessException.js';
 import prisma from '../../shared/database/prisma.js';
 
-const INVENTARIO_URL = process.env['INVENTARIO_SERVICE_URL'] ?? 'http://localhost:3002';
+const INVENTARIO_URL     = process.env['INVENTARIO_SERVICE_URL']     ?? 'http://localhost:3002';
+const MANTENIMIENTO_URL  = process.env['MANTENIMIENTO_SERVICE_URL']  ?? 'http://localhost:3006';
 
 async function fetchInventario<T>(path: string): Promise<T | null> {
   try {
@@ -36,6 +37,26 @@ async function patchVehiculoStatus(vehiculoId: string, data: object, authHeader?
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', Authorization: authHeader ?? '' },
     body: JSON.stringify(data),
+  }).catch(() => {});
+}
+
+function postKardex(
+  vehiculoId: string, evento: string,
+  estadoAnterior: string, estadoNuevo: string,
+  authHeader?: string,
+): void {
+  fetch(`${MANTENIMIENTO_URL}/api/v1/emilypamela/kardex`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: authHeader ?? '' },
+    body: JSON.stringify({ vehiculoId, evento, estadoAnterior, estadoNuevo }),
+  }).catch(() => {});
+}
+
+async function createOutboxEvent(
+  evento: string, usuarioId?: string | null, correlationId?: string | null, payload?: object,
+): Promise<void> {
+  await prisma.outboxEvent.create({
+    data: { evento, usuarioId, correlationId, payload: payload as any },
   }).catch(() => {});
 }
 
@@ -90,7 +111,11 @@ export class AlquilerController {
 
       if (reserva.vehiculoId) {
         patchVehiculoStatus(reserva.vehiculoId, { status: 'EN_USO' }, req.headers.authorization);
+        postKardex(reserva.vehiculoId, 'ALQUILER_INICIADO', 'DISPONIBLE', 'EN_USO', req.headers.authorization);
       }
+      void createOutboxEvent('ALQUILER_INICIADO', reserva.usuarioId, alquiler.id, {
+        alquilerId: alquiler.id, reservaId, vehiculoId: reserva.vehiculoId,
+      });
 
       res.status(201).json({ success: true, data: await this.alquilerRepository.findById(alquiler.id) });
     } catch (err) { next(err); }
@@ -140,7 +165,11 @@ export class AlquilerController {
 
       if (reservaObj?.vehiculoId) {
         patchVehiculoStatus(reservaObj.vehiculoId, { status: 'DISPONIBLE', kilometraje: kmEntrada }, req.headers.authorization);
+        postKardex(reservaObj.vehiculoId, 'DEVOLUCION_REGISTRADA', 'EN_USO', 'DISPONIBLE', req.headers.authorization);
       }
+      void createOutboxEvent('DEVOLUCION_REGISTRADA', alquiler.reservaId, devolucion.id, {
+        devolucionId: devolucion.id, alquilerId: req.params['id'], vehiculoId: reservaObj?.vehiculoId,
+      });
 
       res.status(201).json({ success: true, data: devolucion });
     } catch (err) { next(err); }
@@ -175,7 +204,11 @@ export class AlquilerController {
 
       if (reservaObj?.vehiculoId) {
         patchVehiculoStatus(reservaObj.vehiculoId, { status: 'DISPONIBLE', kilometraje: kmEntrada }, req.headers.authorization);
+        postKardex(reservaObj.vehiculoId, 'DEVOLUCION_REGISTRADA', 'EN_USO', 'DISPONIBLE', req.headers.authorization);
       }
+      void createOutboxEvent('DEVOLUCION_REGISTRADA', alquiler.reservaId, devolucion.id, {
+        devolucionId: devolucion.id, alquilerId, vehiculoId: reservaObj?.vehiculoId,
+      });
 
       res.status(201).json({ success: true, data: devolucion });
     } catch (err) { next(err); }
