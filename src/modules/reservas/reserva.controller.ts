@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { ReservaRepository } from './reserva.repository.js';
 import { NotFoundException, ValidationException } from '../../shared/errors/BusinessException.js';
+import prisma from '../../shared/database/prisma.js';
 
 const INVENTARIO_URL = process.env['INVENTARIO_SERVICE_URL'] ?? 'http://localhost:3002';
 
@@ -32,6 +33,14 @@ function generarCodigo(): string {
 function calcularDias(inicio: string, fin: string): number {
   const ms = new Date(fin).getTime() - new Date(inicio).getTime();
   return Math.ceil(ms / (1000 * 60 * 60 * 24));
+}
+
+async function emitOutbox(
+  evento: string, usuarioId?: string | null, correlationId?: string | null, payload?: object,
+): Promise<void> {
+  await prisma.outboxEvent.create({
+    data: { evento, usuarioId, correlationId, payload: payload as any },
+  }).catch(() => {});
 }
 
 export class ReservaController {
@@ -117,6 +126,9 @@ export class ReservaController {
         extras: extrasData,
       });
 
+      void emitOutbox('RESERVA_CREADA', usuarioId, reserva.id, {
+        reservaId: reserva.id, vehiculoId, totalAmount: reserva.totalAmount,
+      });
       res.status(201).json({ success: true, data: reserva });
     } catch (err) { next(err); }
   };
@@ -125,7 +137,13 @@ export class ReservaController {
     try {
       const reserva = await this.reservaRepository.findById(req.params['id'] as string);
       if (!reserva) throw new NotFoundException('Reserva', req.params['id'] as string);
-      res.json({ success: true, data: await this.reservaRepository.update(req.params['id'] as string, req.body) });
+      const updated = await this.reservaRepository.update(req.params['id'] as string, req.body);
+      if (req.body.status) {
+        void emitOutbox(`RESERVA_${req.body.status}`, req.user?.id, updated.id, {
+          reservaId: updated.id, status: req.body.status,
+        });
+      }
+      res.json({ success: true, data: updated });
     } catch (err) { next(err); }
   };
 
@@ -136,7 +154,9 @@ export class ReservaController {
       if (reserva.status === 'COMPLETADA' || reserva.status === 'CANCELADA') {
         throw new ValidationException(`No se puede cancelar una reserva en estado ${reserva.status}`);
       }
-      res.json({ success: true, data: await this.reservaRepository.update(req.params['id'] as string, { status: 'CANCELADA' }) });
+      const cancelled = await this.reservaRepository.update(req.params['id'] as string, { status: 'CANCELADA' });
+      void emitOutbox('RESERVA_CANCELADA', req.user?.id, cancelled.id, { reservaId: cancelled.id });
+      res.json({ success: true, data: cancelled });
     } catch (err) { next(err); }
   };
 
