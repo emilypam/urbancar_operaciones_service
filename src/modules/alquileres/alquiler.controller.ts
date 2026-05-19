@@ -5,6 +5,7 @@ import prisma from '../../shared/database/prisma.js';
 
 const INVENTARIO_URL     = process.env['INVENTARIO_SERVICE_URL']     ?? 'http://localhost:3002';
 const MANTENIMIENTO_URL  = process.env['MANTENIMIENTO_SERVICE_URL']  ?? 'http://localhost:3006';
+const FINANCIERO_URL     = process.env['FINANCIERO_SERVICE_URL']     ?? 'http://localhost:3005';
 
 async function fetchInventario<T>(path: string): Promise<T | null> {
   try {
@@ -49,6 +50,31 @@ function postKardex(
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: authHeader ?? '' },
     body: JSON.stringify({ vehiculoId, evento, estadoAnterior, estadoNuevo }),
+  }).catch(() => {});
+}
+
+function buildDetallesFactura(reserva: any, cargoExtra: number): object[] {
+  const detalles: object[] = [];
+  if (Number(reserva.precioBase) > 0) {
+    detalles.push({ descripcion: `Renta del vehículo (${reserva.diasTotal ?? 1} días)`, cantidad: 1, precioUnit: Number(reserva.precioBase) });
+  }
+  if (Number(reserva.precioSeguro) > 0) {
+    detalles.push({ descripcion: 'Seguro', cantidad: 1, precioUnit: Number(reserva.precioSeguro) });
+  }
+  if (Number(reserva.precioExtras) > 0) {
+    detalles.push({ descripcion: 'Extras', cantidad: 1, precioUnit: Number(reserva.precioExtras) });
+  }
+  if (cargoExtra > 0) {
+    detalles.push({ descripcion: 'Cargo adicional por devolución', cantidad: 1, precioUnit: Number(cargoExtra) });
+  }
+  return detalles;
+}
+
+function postFactura(reservaId: string, detalles: object[], authHeader?: string): void {
+  fetch(`${FINANCIERO_URL}/api/v1/emilypamela/facturas`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: authHeader ?? '' },
+    body: JSON.stringify({ reservaId, detalles }),
   }).catch(() => {});
 }
 
@@ -167,6 +193,9 @@ export class AlquilerController {
         patchVehiculoStatus(reservaObj.vehiculoId, { status: 'DISPONIBLE', kilometraje: kmEntrada }, req.headers.authorization);
         postKardex(reservaObj.vehiculoId, 'DEVOLUCION_REGISTRADA', 'EN_USO', 'DISPONIBLE', req.headers.authorization);
       }
+      if (reservaObj) {
+        postFactura(alquiler.reservaId!, buildDetallesFactura(reservaObj, cargoExtra), req.headers.authorization);
+      }
       void createOutboxEvent('DEVOLUCION_REGISTRADA', alquiler.reservaId, devolucion.id, {
         devolucionId: devolucion.id, alquilerId: req.params['id'], vehiculoId: reservaObj?.vehiculoId,
       });
@@ -205,6 +234,9 @@ export class AlquilerController {
       if (reservaObj?.vehiculoId) {
         patchVehiculoStatus(reservaObj.vehiculoId, { status: 'DISPONIBLE', kilometraje: kmEntrada }, req.headers.authorization);
         postKardex(reservaObj.vehiculoId, 'DEVOLUCION_REGISTRADA', 'EN_USO', 'DISPONIBLE', req.headers.authorization);
+      }
+      if (reservaObj) {
+        postFactura(alquiler.reservaId!, buildDetallesFactura(reservaObj, cargoExtra), req.headers.authorization);
       }
       void createOutboxEvent('DEVOLUCION_REGISTRADA', alquiler.reservaId, devolucion.id, {
         devolucionId: devolucion.id, alquilerId, vehiculoId: reservaObj?.vehiculoId,
