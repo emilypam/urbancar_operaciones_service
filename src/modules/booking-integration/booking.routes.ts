@@ -221,6 +221,21 @@ export function createReservaBookingRouter(reservaRepo: ReservaRepository): Rout
       }
 
       const updated = await reservaRepo.update(req.params['id'] as string, { status: nuevoStatus });
+
+      // Sync vehicle status in inventario when reservation changes
+      if (reserva.vehiculoId) {
+        const vehiculoStatus =
+          nuevoStatus === 'CONFIRMADA' ? 'RESERVADO' :
+          nuevoStatus === 'CANCELADA'  ? 'DISPONIBLE' : null;
+        if (vehiculoStatus) {
+          fetch(`${INVENTARIO_URL}/api/v1/emilypamela/vehiculos/${reserva.vehiculoId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', Authorization: req.headers.authorization ?? '' },
+            body: JSON.stringify({ status: vehiculoStatus }),
+          }).catch(() => {});
+        }
+      }
+
       res.json({ success: true, data: toReservaBookingDto(updated) });
     } catch (err) { next(err); }
   });
