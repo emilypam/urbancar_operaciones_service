@@ -126,7 +126,7 @@ export function createReservaBookingRouter(reservaRepo: ReservaRepository): Rout
         res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: fechaResult.error } });
         return;
       }
-      const { dias } = fechaResult;
+      const { dias, dInicio, dFin } = fechaResult;
 
       // 3. Vehicle fetch + availability
       const vehiculo = await fetchVehiculo(vehiculoId);
@@ -163,9 +163,8 @@ export function createReservaBookingRouter(reservaRepo: ReservaRepository): Rout
 
       const precioBase = precioDia * dias;
 
-      // Pass date-only strings so the repository's template literal stays valid
-      const fechaInicioDate = (fechaInicio as string).split('T')[0]!;
-      const fechaFinDate    = (fechaFin    as string).split('T')[0]!;
+      const fechaInicioDate = dInicio.toISOString().split('T')[0]!;
+      const fechaFinDate    = dFin.toISOString().split('T')[0]!;
 
       const reserva = await reservaRepo.create({
         usuarioId:     clienteId,
