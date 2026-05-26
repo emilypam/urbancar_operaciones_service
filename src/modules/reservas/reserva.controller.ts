@@ -2,8 +2,26 @@ import { Request, Response, NextFunction } from 'express';
 import { ReservaRepository } from './reserva.repository.js';
 import { NotFoundException, ValidationException } from '../../shared/errors/BusinessException.js';
 import prisma from '../../shared/database/prisma.js';
+import jwt from 'jsonwebtoken';
 
 const INVENTARIO_URL = process.env['INVENTARIO_SERVICE_URL'] ?? 'http://localhost:3002';
+const JWT_SECRET     = process.env['JWT_SECRET'] ?? 'dev-secret';
+
+function serviceToken(): string {
+  return jwt.sign(
+    { id: 'operaciones-service', email: 'service@urbancar.internal', role: 'ADMIN' },
+    JWT_SECRET,
+    { expiresIn: '60s' },
+  );
+}
+
+function syncVehiculo(vehiculoId: string, status: string): void {
+  fetch(`${INVENTARIO_URL}/api/v1/emilypamela/vehiculos/${vehiculoId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceToken()}` },
+    body: JSON.stringify({ status }),
+  }).catch(() => {});
+}
 
 async function fetchInventario<T>(path: string): Promise<T | null> {
   try {
@@ -142,6 +160,10 @@ export class ReservaController {
         void emitOutbox(`RESERVA_${req.body.status}`, req.user?.id, updated.id, {
           reservaId: updated.id, status: req.body.status,
         });
+        const vehiculoStatus =
+          req.body.status === 'CONFIRMADA' ? 'RESERVADO' :
+          req.body.status === 'CANCELADA'  ? 'DISPONIBLE' : null;
+        if (vehiculoStatus && reserva.vehiculoId) syncVehiculo(reserva.vehiculoId, vehiculoStatus);
       }
       res.json({ success: true, data: updated });
     } catch (err) { next(err); }
@@ -156,6 +178,7 @@ export class ReservaController {
       }
       const cancelled = await this.reservaRepository.update(req.params['id'] as string, { status: 'CANCELADA' });
       void emitOutbox('RESERVA_CANCELADA', req.user?.id, cancelled.id, { reservaId: cancelled.id });
+      if (reserva.vehiculoId) syncVehiculo(reserva.vehiculoId, 'DISPONIBLE');
       res.json({ success: true, data: cancelled });
     } catch (err) { next(err); }
   };
