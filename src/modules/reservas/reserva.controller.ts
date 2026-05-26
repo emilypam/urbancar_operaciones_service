@@ -147,6 +147,7 @@ export class ReservaController {
       void emitOutbox('RESERVA_CREADA', usuarioId, reserva.id, {
         reservaId: reserva.id, vehiculoId, totalAmount: reserva.totalAmount,
       });
+      syncVehiculo(vehiculoId, 'RESERVADO');
       res.status(201).json({ success: true, data: reserva });
     } catch (err) { next(err); }
   };
