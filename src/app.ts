@@ -109,6 +109,20 @@ app.get('/api/v1/emilypamela/outbox-events', authenticate, requireAdmin, async (
   } catch (err) { next(err); }
 });
 
+app.post('/api/v1/emilypamela/kardex', authenticate, requireAdmin, async (req, res, next) => {
+  try {
+    const { vehiculoId, estadoAnterior, estadoNuevo, evento, usuarioId, referencia } = req.body;
+    if (!vehiculoId || !estadoNuevo || !evento) {
+      res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'vehiculoId, estadoNuevo y evento son requeridos' } });
+      return;
+    }
+    const entry = await prisma.kardex.create({
+      data: { vehiculoId, estadoAnterior: estadoAnterior ?? null, estadoNuevo, evento, usuarioId: usuarioId ?? null, referencia: referencia ?? null },
+    });
+    res.status(201).json({ success: true, data: entry });
+  } catch (err) { next(err); }
+});
+
 app.get('/api/v1/emilypamela/kardex', authenticate, requireAdmin, async (req, res, next) => {
   try {
     const page       = Number(req.query.page)  || 1;
