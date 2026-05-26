@@ -2,8 +2,18 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { ReservaRepository }  from '../reservas/reserva.repository.js';
 import { AlquilerRepository } from '../alquileres/alquiler.repository.js';
 import prisma from '../../shared/database/prisma.js';
+import jwt from 'jsonwebtoken';
 
 const INVENTARIO_URL = process.env['INVENTARIO_SERVICE_URL'] ?? 'http://localhost:3002';
+const JWT_SECRET     = process.env['JWT_SECRET'] ?? 'dev-secret';
+
+function serviceToken(): string {
+  return jwt.sign(
+    { id: 'operaciones-service', email: 'service@urbancar.internal', role: 'ADMIN' },
+    JWT_SECRET,
+    { expiresIn: '60s' },
+  );
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -230,7 +240,7 @@ export function createReservaBookingRouter(reservaRepo: ReservaRepository): Rout
         if (vehiculoStatus) {
           fetch(`${INVENTARIO_URL}/api/v1/emilypamela/vehiculos/${reserva.vehiculoId}`, {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json', Authorization: req.headers.authorization ?? '' },
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceToken()}` },
             body: JSON.stringify({ status: vehiculoStatus }),
           }).catch(() => {});
         }
@@ -290,7 +300,7 @@ export function createAlquilerBookingRouter(alquilerRepo: AlquilerRepository): R
       if (reserva.vehiculoId) {
         fetch(`${INVENTARIO_URL}/api/v1/emilypamela/vehiculos/${reserva.vehiculoId}`, {
           method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', Authorization: req.headers.authorization ?? '' },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceToken()}` },
           body: JSON.stringify({ status: 'EN_USO' }),
         }).catch(() => {});
       }
@@ -350,7 +360,7 @@ export function createDevolucionBookingRouter(alquilerRepo: AlquilerRepository):
       if (reservaObj?.vehiculoId) {
         fetch(`${INVENTARIO_URL}/api/v1/emilypamela/vehiculos/${reservaObj.vehiculoId}`, {
           method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', Authorization: req.headers.authorization ?? '' },
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceToken()}` },
           body: JSON.stringify({ status: 'DISPONIBLE', kilometraje: kmEntrada }),
         }).catch(() => {});
       }
