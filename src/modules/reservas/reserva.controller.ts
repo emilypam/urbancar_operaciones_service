@@ -58,7 +58,16 @@ async function emitOutbox(
 ): Promise<void> {
   await prisma.outboxEvent.create({
     data: { evento, usuarioId, correlationId, payload: payload as any },
-  }).catch(() => {});
+  }).catch((err) => console.error('❌ emitOutbox:', err));
+}
+
+async function syncKardex(
+  vehiculoId: string, estadoAnterior: string | null, estadoNuevo: string,
+  evento: string, usuarioId?: string | null, referencia?: string,
+): Promise<void> {
+  await prisma.kardex.create({
+    data: { vehiculoId, estadoAnterior, estadoNuevo, evento, usuarioId, referencia },
+  }).catch((err) => console.error('❌ syncKardex:', err));
 }
 
 export class ReservaController {
@@ -148,6 +157,7 @@ export class ReservaController {
         reservaId: reserva.id, vehiculoId, totalAmount: reserva.totalAmount,
       });
       syncVehiculo(vehiculoId, 'RESERVADO');
+      void syncKardex(vehiculoId, 'DISPONIBLE', 'RESERVADO', 'RESERVA_CREADA', usuarioId, reserva.id);
       res.status(201).json({ success: true, data: reserva });
     } catch (err) { next(err); }
   };
@@ -164,7 +174,14 @@ export class ReservaController {
         const vehiculoStatus =
           req.body.status === 'CONFIRMADA' ? 'RESERVADO' :
           req.body.status === 'CANCELADA'  ? 'DISPONIBLE' : null;
-        if (vehiculoStatus && reserva.vehiculoId) syncVehiculo(reserva.vehiculoId, vehiculoStatus);
+        if (vehiculoStatus && reserva.vehiculoId) {
+          syncVehiculo(reserva.vehiculoId, vehiculoStatus);
+          if (req.body.status === 'CANCELADA') {
+            void syncKardex(reserva.vehiculoId, 'RESERVADO', 'DISPONIBLE', 'RESERVA_CANCELADA', req.user?.id, updated.id);
+          } else if (req.body.status === 'CONFIRMADA') {
+            void syncKardex(reserva.vehiculoId, 'DISPONIBLE', 'RESERVADO', 'RESERVA_CONFIRMADA', req.user?.id, updated.id);
+          }
+        }
       }
       res.json({ success: true, data: updated });
     } catch (err) { next(err); }
@@ -179,7 +196,10 @@ export class ReservaController {
       }
       const cancelled = await this.reservaRepository.update(req.params['id'] as string, { status: 'CANCELADA' });
       void emitOutbox('RESERVA_CANCELADA', req.user?.id, cancelled.id, { reservaId: cancelled.id });
-      if (reserva.vehiculoId) syncVehiculo(reserva.vehiculoId, 'DISPONIBLE');
+      if (reserva.vehiculoId) {
+        syncVehiculo(reserva.vehiculoId, 'DISPONIBLE');
+        void syncKardex(reserva.vehiculoId, 'RESERVADO', 'DISPONIBLE', 'RESERVA_CANCELADA', req.user?.id, cancelled.id);
+      }
       res.json({ success: true, data: cancelled });
     } catch (err) { next(err); }
   };

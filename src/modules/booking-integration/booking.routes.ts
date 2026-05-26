@@ -243,6 +243,12 @@ export function createReservaBookingRouter(reservaRepo: ReservaRepository): Rout
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceToken()}` },
             body: JSON.stringify({ status: vehiculoStatus }),
           }).catch(() => {});
+          const kardexEstadoAnterior = nuevoStatus === 'CANCELADA' ? 'RESERVADO' : 'DISPONIBLE';
+          const kardexEstadoNuevo    = nuevoStatus === 'CANCELADA' ? 'DISPONIBLE' : 'RESERVADO';
+          const kardexEvento         = nuevoStatus === 'CANCELADA' ? 'RESERVA_CANCELADA_BOOKING' : 'RESERVA_CONFIRMADA_BOOKING';
+          prisma.kardex.create({
+            data: { vehiculoId: reserva.vehiculoId, estadoAnterior: kardexEstadoAnterior, estadoNuevo: kardexEstadoNuevo, evento: kardexEvento, referencia: req.params['id'] as string },
+          }).catch(() => {});
         }
       }
 
@@ -303,6 +309,9 @@ export function createAlquilerBookingRouter(alquilerRepo: AlquilerRepository): R
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceToken()}` },
           body: JSON.stringify({ status: 'EN_USO' }),
         }).catch(() => {});
+        prisma.kardex.create({
+          data: { vehiculoId: reserva.vehiculoId, estadoAnterior: 'RESERVADO', estadoNuevo: 'EN_USO', evento: 'ALQUILER_INICIADO', referencia: alquiler.id },
+        }).catch(() => {});
       }
 
       const result = await alquilerRepo.findById(alquiler.id);
@@ -362,6 +371,9 @@ export function createDevolucionBookingRouter(alquilerRepo: AlquilerRepository):
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${serviceToken()}` },
           body: JSON.stringify({ status: 'DISPONIBLE', kilometraje: kmEntrada }),
+        }).catch(() => {});
+        prisma.kardex.create({
+          data: { vehiculoId: reservaObj.vehiculoId, estadoAnterior: 'EN_USO', estadoNuevo: 'DISPONIBLE', evento: 'VEHICULO_DEVUELTO', referencia: devolucion.id },
         }).catch(() => {});
       }
 

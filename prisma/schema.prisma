@@ -130,6 +130,19 @@ model OutboxEvent {
   @@map("outbox_events")
 }
 
+model Kardex {
+  id             String    @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  vehiculoId     String?   @map("vehiculo_id") @db.Uuid
+  evento         String?
+  estadoAnterior String?   @map("estado_anterior")
+  estadoNuevo    String?   @map("estado_nuevo")
+  usuarioId      String?   @map("usuario_id") @db.Uuid
+  referencia     String?
+  createdAt      DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+
+  @@map("kardex")
+}
+
 enum reserva_status {
   PENDIENTE
   CONFIRMADA

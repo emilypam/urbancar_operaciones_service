@@ -109,6 +109,28 @@ app.get('/api/v1/emilypamela/outbox-events', authenticate, requireAdmin, async (
   } catch (err) { next(err); }
 });
 
+app.get('/api/v1/emilypamela/kardex', authenticate, requireAdmin, async (req, res, next) => {
+  try {
+    const page       = Number(req.query.page)  || 1;
+    const limit      = Number(req.query.limit) || 50;
+    const vehiculoId = req.query['vehiculoId'] as string | undefined;
+    const where      = vehiculoId ? { vehiculoId } : {};
+    const [total, items] = await Promise.all([
+      prisma.kardex.count({ where }),
+      prisma.kardex.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+    res.json({
+      success: true,
+      data: { items, total, page, limit, totalPages: Math.ceil(total / limit) },
+    });
+  } catch (err) { next(err); }
+});
+
 // Booking integration routes — registered BEFORE main routers to avoid /:id collision
 app.use('/api/v1/emilypamela/reservas/booking',    createReservaBookingRouter(reservaRepository));
 app.use('/api/v1/emilypamela/alquileres/booking',  createAlquilerBookingRouter(alquilerRepository));
