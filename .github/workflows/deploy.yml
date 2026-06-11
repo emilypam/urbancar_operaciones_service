@@ -40,5 +40,6 @@ jobs:
             --name operaciones-service \
             --resource-group $RESOURCE_GROUP \
             --image $ACR_SERVER/operaciones-service:latest \
+            --set-env-vars "RABBITMQ_URL=${{ secrets.RABBITMQ_URL }}" \
             --output none
           echo "operaciones-service desplegado ✓"

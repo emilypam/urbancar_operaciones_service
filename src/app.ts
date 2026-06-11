@@ -18,6 +18,9 @@ import { errorHandler } from './shared/errors/error.middleware.js';
 import { swaggerSpec } from './shared/swagger.js';
 import { authenticate, requireAdmin } from './shared/middlewares/auth.middleware.js';
 import prisma from './shared/database/prisma.js';
+import { connectRabbitMQ } from './messaging/rabbitmq.js';
+import { createReservaV2Router } from './modules/reservas/v2/reserva.routes.v2.js';
+import { startPagoProcesadoConsumer } from './messaging/consumers/pago-procesado.consumer.js';
 
 const app = express();
 
@@ -153,6 +156,10 @@ app.use('/api/v1/emilypamela/devoluciones/booking', createDevolucionBookingRoute
 app.use('/api/v1/emilypamela/reservas',   createReservaRouter(reservaController));
 app.use('/api/v1/emilypamela/alquileres', createAlquilerRouter(alquilerController));
 app.use('/api/v1/emilypamela', createCatalogoOpsRouter(catalogoOpsController));
+
+// V2 — rutas con mensajería RabbitMQ (v1 intactas arriba)
+connectRabbitMQ('operaciones-service').then(() => startPagoProcesadoConsumer());
+app.use('/api/v2/emilypamela/reservas', createReservaV2Router());
 
 // Integración Booking: endpoint plano POST /devoluciones (legado)
 app.post(
