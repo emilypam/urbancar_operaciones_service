@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { getChannel, EXCHANGE } from './rabbitmq.js';
+import { logger } from '../shared/logger.js';
 
 export interface DomainEvent {
   eventId:       string;
@@ -34,9 +35,9 @@ export function publish(
       Buffer.from(JSON.stringify(event)),
       { contentType: 'application/json', persistent: true, messageId: event.eventId },
     );
-    console.log(`[operaciones-service] ✉️  ${routingKey} → ${event.eventId}`);
+    logger.info('evento publicado', { routingKey, eventId: event.eventId, correlationId });
   } else {
-    console.warn(`[operaciones-service] RabbitMQ no conectado — evento local: ${routingKey}`);
+    logger.warn('RabbitMQ no conectado — evento no enviado', { routingKey });
   }
 
   return event;
