@@ -14,6 +14,11 @@ import {
   createAlquilerBookingRouter,
   createDevolucionBookingRouter,
 } from './modules/booking-integration/booking.routes.js';
+import {
+  createReservaBookingV2Router,
+  createAlquilerBookingV2Router,
+  createDevolucionBookingV2Router,
+} from './modules/booking-integration/booking.v2.routes.js';
 import { errorHandler } from './shared/errors/error.middleware.js';
 import { swaggerSpec } from './shared/swagger.js';
 import { authenticate, requireAdmin } from './shared/middlewares/auth.middleware.js';
@@ -159,6 +164,10 @@ app.use('/api/v1/emilypamela', createCatalogoOpsRouter(catalogoOpsController));
 
 // V2 — rutas con mensajería RabbitMQ (v1 intactas arriba)
 connectRabbitMQ('operaciones-service').then(() => startPagoProcesadoConsumer());
+// Booking v2 must be registered BEFORE the general /reservas route to avoid /:id collision
+app.use('/api/v2/emilypamela/reservas/booking',    createReservaBookingV2Router(reservaRepository));
+app.use('/api/v2/emilypamela/alquileres/booking',  createAlquilerBookingV2Router(alquilerRepository));
+app.use('/api/v2/emilypamela/devoluciones/booking', createDevolucionBookingV2Router(alquilerRepository));
 app.use('/api/v2/emilypamela/reservas', createReservaV2Router());
 
 // Integración Booking: endpoint plano POST /devoluciones (legado)
